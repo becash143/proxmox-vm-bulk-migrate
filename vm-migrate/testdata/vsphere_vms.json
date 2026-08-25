@@ -1,0 +1,29 @@
+[
+  {
+    "name": "web-01",
+    "moref": "vm-101",
+    "num_cpu": 4,
+    "memory_size": 8192,
+    "power": "poweredOn",
+    "guest_full_name": "Ubuntu Linux (64-bit)",
+    "host_moref": "host-1"
+  },
+  {
+    "name": "db-01",
+    "moref": "vm-102",
+    "num_cpu": 8,
+    "memory_size": 32768,
+    "power": "poweredOff",
+    "guest_full_name": "Microsoft Windows Server 2019 (64-bit)",
+    "host_moref": "host-1"
+  },
+  {
+    "name": "New Virtual Machine",
+    "moref": "vm-103",
+    "num_cpu": 2,
+    "memory_size": 4096,
+    "power": "poweredOff",
+    "guest_full_name": "Other Linux (64-bit)",
+    "host_moref": "host-2"
+  }
+]
