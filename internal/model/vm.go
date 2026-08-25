@@ -29,19 +29,25 @@ type VSphereVM struct {
 	CapturedAt     time.Time `json:"captured_at"`
 }
 
-// ProxmoxVM mirrors the subset of columns exposed by your Proxmox
-// Steampipe plugin's VM table. Field names below follow the
-// conventional shape (vmid, name, node, status, cores, maxmem);
-// adjust the JSON tags to match your actual plugin's column names if
-// they differ.
+// ProxmoxVM mirrors the subset of columns exposed by the becash143/proxmox
+// Steampipe plugin's proxmox_vm table (hub.steampipe.io/plugins/becash143/proxmox/tables/proxmox_vm).
+// Confirmed against the plugin's published docs: name, vm_id, node,
+// status, cpus, max_mem.
+//
+// Unit note: max_mem passes through Proxmox's own API value, which is
+// bytes -- unlike VSphereVM.MemoryMB above (vSphere's memory_size is
+// natively MB). Don't compare these two fields directly without
+// converting; nothing in this codebase does today (MaxMemBytes is
+// captured but not yet consumed anywhere), but it will be a trap for
+// whoever wires it into a capacity check next.
 type ProxmoxVM struct {
-	VMID       int       `json:"vmid"`
-	Name       string    `json:"name"`
-	Node       string    `json:"node"`
-	Status     string    `json:"status"` // running / stopped
-	Cores      int       `json:"cores"`
-	MaxMemMB   int64     `json:"maxmem"`
-	CapturedAt time.Time `json:"captured_at"`
+	VMID        int       `json:"vm_id"`
+	Name        string    `json:"name"`
+	Node        string    `json:"node"`
+	Status      string    `json:"status"` // running / stopped
+	Cores       int       `json:"cpus"`
+	MaxMemBytes int64     `json:"max_mem"`
+	CapturedAt  time.Time `json:"captured_at"`
 }
 
 // InventorySnapshot is a single point-in-time discovery result,

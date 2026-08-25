@@ -11,9 +11,10 @@ readiness checks, wave planning, concurrent bulk import, and
 post-migration drift detection.
 
 It reads inventory from **Steampipe** (the `theapsgroup/vsphere`
-plugin and your own Proxmox plugin), keeps its own durable plan on
-disk, and drives migration through the documented Proxmox VE REST API
-`import-from` mechanism — the same one the GUI wizard uses internally.
+plugin and [`becash143/proxmox`](https://hub.steampipe.io/plugins/becash143/proxmox)),
+keeps its own durable plan on disk, and drives migration through the
+documented Proxmox VE REST API `import-from` mechanism — the same one
+the GUI wizard uses internally.
 
 ## Why this architecture
 
@@ -38,23 +39,107 @@ to audit.
   1.21.x toolchain, `go build` will try to auto-fetch 1.22 over the
   network, which fails in offline/locked-down environments, so just
   use 1.22+ directly)
-- `steampipe` installed (see steampipe.io/downloads) and configured
-  with:
-  - `theapsgroup/vsphere` plugin, connected to your vCenter/ESXi —
-    `steampipe plugin install theapsgroup/vsphere`, then add a
-    connection in `~/.steampipe/config/vsphere.spc`
-  - your Proxmox Steampipe plugin, connected to your PVE cluster —
-    same pattern, its own `.spc` connection file
-  - This tool assumes you already have both plugins installed and
-    query-able via `steampipe query "select * from vsphere_vm"`
-    (or your Proxmox table) before you touch `vmmigrate` at all —
-    get that working first, independent of this tool, if it isn't
-    already.
+- `steampipe`, plus the `theapsgroup/vsphere` and `becash143/proxmox`
+  plugins, installed and connected — see the dedicated section below
 - A Proxmox API token (`Datacenter > Permissions > API Tokens`) with
   rights to create VMs and read tasks on the target node(s)
 - An ESXi/vCenter host already registered as Proxmox storage
   (`Datacenter > Storage > Add > ESXi`) — this tool imports through
   that storage target, it does not register it for you
+
+## Installing Steampipe and the plugins
+
+This tool doesn't install or configure Steampipe for you — get these
+three things working *first*, independently of `vmmigrate`, before
+you build or run this repo at all.
+
+### 1. Install Steampipe itself
+
+From [steampipe.io/downloads](https://steampipe.io/downloads), the
+current install commands are:
+
+```
+# Linux / WSL2
+sudo /bin/sh -c "$(curl -fsSL https://steampipe.io/install/steampipe.sh)"
+
+# macOS
+brew install turbot/tap/steampipe
+```
+
+Confirm it worked:
+
+```
+steampipe -v
+```
+
+### 2. Install and configure `theapsgroup/vsphere`
+
+```
+steampipe plugin install theapsgroup/vsphere
+```
+
+This creates `~/.steampipe/config/vsphere.spc`. Edit it to add a
+connection (or use the `VSPHERE_SERVER` / `VSPHERE_USER` /
+`VSPHERE_PASSWORD` env vars instead — both are documented in the
+plugin's own repo). Per the plugin's published README
+([theapsgroup/steampipe-plugin-vsphere](https://github.com/theapsgroup/steampipe-plugin-vsphere)),
+the connection block looks like:
+
+```hcl
+connection "vsphere" {
+  plugin                = "theapsgroup/vsphere"
+  vsphere_server         = "vcenter.example.local"
+  user                   = "svc-vspherero@vsphere.local"
+  password               = "your-password"
+  allow_unverified_ssl   = true   # common for internal vCenter certs
+}
+```
+
+Full column/table reference:
+[hub.steampipe.io/plugins/theapsgroup/vsphere](https://hub.steampipe.io/plugins/theapsgroup/vsphere).
+
+### 3. Install and configure `becash143/proxmox`
+
+```
+steampipe plugin install becash143/proxmox
+```
+
+This creates `~/.steampipe/config/proxmox.spc`. The exact connection
+arguments (API URL, token ID/secret, TLS options, etc.) are
+documented on the plugin's own pages — check both before configuring:
+
+- Hub overview: [hub.steampipe.io/plugins/becash143/proxmox](https://hub.steampipe.io/plugins/becash143/proxmox)
+- Source + README: [github.com/becash143/steampipe-plugin-proxmox](https://github.com/becash143/steampipe-plugin-proxmox)
+
+(We deliberately aren't reproducing a connection-block example for
+this one the way we did for vsphere above — we could confirm this
+plugin's real *table/column* schema against its published docs
+(covered below and already reflected in `queries/discover_proxmox.sql`
+and `model.ProxmoxVM`), but not the exact connection-argument names,
+so rather than guess at those and risk sending you down a debugging
+path with a wrong field name, we're pointing you at the source.)
+
+### 4. Verify both, independently of `vmmigrate`
+
+Before touching this tool at all, confirm both plugins actually
+return data:
+
+```
+steampipe query "select * from vsphere_vm limit 1"
+steampipe query "select * from proxmox_vm limit 1"
+```
+
+If either of those fails or returns nothing, that's a Steampipe/
+plugin-configuration problem to resolve first — `vmmigrate discover`
+will hit the exact same failure, just with an extra layer of
+indirection that makes it harder to debug.
+
+`queries/discover_proxmox.sql` and `model.ProxmoxVM` are written
+against `becash143/proxmox`'s real, published `proxmox_vm` table
+schema (`vm_id`, `name`, `node`, `status`, `cpus`, `max_mem`) — this
+is confirmed against
+[the plugin's table docs](https://hub.steampipe.io/plugins/becash143/proxmox/tables/proxmox_vm),
+not a guess.
 
 ## Build
 
@@ -126,12 +211,19 @@ export PVE_TOKEN_VALUE="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
   surface.
 - `theapsgroup/vsphere` plugin's `vsphere_vm` table columns
   (`name`, `moref`, `num_cpu`, `memory_size`, `power`, `guest_full_name`).
+- [`becash143/proxmox`](https://hub.steampipe.io/plugins/becash143/proxmox)
+  plugin's `proxmox_vm` table columns (`name`, `vm_id`, `node`,
+  `status`, `cpus`, `max_mem`), per the plugin's own published docs —
+  `queries/discover_proxmox.sql` and `model.ProxmoxVM` now match this
+  exactly, this is no longer a guess.
 
 **You need to confirm/adjust for your setup:**
-- Your Proxmox plugin's actual table/column names in
-  `queries/discover_proxmox.sql` — this repo assumes a
-  `proxmox_vm` table with `vmid, name, node, status, cores, maxmem`;
-  swap these to match your plugin's real schema.
+- `max_mem` from `proxmox_vm` is bytes (it passes through Proxmox's
+  own API value), while `memory_size` from `vsphere_vm` is natively
+  MB — nothing in this codebase compares the two directly today
+  (`ProxmoxVM.MaxMemBytes` is captured but not yet consumed
+  anywhere), but if you wire it into a capacity check or comparison
+  later, convert first.
 - Whether your vSphere plugin install exposes `firmware` — if not,
   the firmware readiness check reports `info` (not a false `ok`)
   rather than silently skipping.

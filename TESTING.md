@@ -9,9 +9,35 @@ stop after any step and still have given useful feedback.
 
 - Point this at **non-production VMs only** — a couple of throwaway
   test VMs on the ESXi side is ideal.
-- You'll need Steampipe installed and configured with:
-  - the `theapsgroup/vsphere` plugin, pointed at your vCenter/ESXi
-  - your Proxmox Steampipe plugin, pointed at your PVE cluster
+- You'll need Steampipe itself, plus both plugins, installed and
+  independently verified as working — full instructions with the
+  real install commands and links to each plugin's own docs are in
+  the README's ["Installing Steampipe and the
+  plugins"](README.md#installing-steampipe-and-the-plugins) section;
+  the short version:
+
+  ```
+  # 1. Steampipe itself (Linux/WSL2; see the README for macOS)
+  sudo /bin/sh -c "$(curl -fsSL https://steampipe.io/install/steampipe.sh)"
+
+  # 2. Both plugins
+  steampipe plugin install theapsgroup/vsphere
+  steampipe plugin install becash143/proxmox
+
+  # 3. Configure each connection (~/.steampipe/config/*.spc) --
+  #    see the README section above for the vsphere connection block;
+  #    for proxmox, check the plugin's own docs/README linked there,
+  #    since we couldn't independently verify its exact connection
+  #    field names.
+
+  # 4. Confirm BOTH work before going anywhere near vmmigrate
+  steampipe query "select * from vsphere_vm limit 1"
+  steampipe query "select * from proxmox_vm limit 1"
+  ```
+
+  If step 4 doesn't return real rows for both, stop here — that's a
+  Steampipe/plugin problem, not a `vmmigrate` problem, and step 2
+  below will just fail with the same root cause one layer removed.
 - You'll need a Proxmox API token (`Datacenter > Permissions > API
   Tokens`) with rights to create VMs on the target node.
 
@@ -38,10 +64,13 @@ or Proxmox. If you'd rather not stay in one directory, pass
 ./vmmigrate discover
 ```
 
-**This is very likely to fail on the first try** — `queries/discover_proxmox.sql`
-assumes a table/column layout I guessed at (`proxmox_vm` with `vmid,
-name, node, status, cores, maxmem`). If your plugin's schema is
-different, edit that file to match, then re-run.
+**This might still fail on the first try** if your `proxmox_vm`
+table doesn't match the becash143/proxmox plugin schema this repo
+now targets (`vm_id, name, node, status, cpus, max_mem`) — e.g. if
+you're on an older/different version of the plugin. If so, edit
+`queries/discover_proxmox.sql` and `internal/model/vm.go` to match
+what `steampipe query "select * from proxmox_vm"` actually returns
+for you, then re-run.
 
 **What to send back:** the exact error if it fails, or the success
 line (`Discovered N vSphere VM(s) and M Proxmox VM(s)...`) if it works.

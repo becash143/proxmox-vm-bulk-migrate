@@ -1,14 +1,16 @@
--- Discovery query against your Proxmox Steampipe plugin.
--- Adjust table/column names to match what your plugin actually
--- exposes (this tool doesn't assume a specific plugin name since
--- yours is custom) -- the Go side only cares that the JSON keys
--- returned match the `json` tags on model.ProxmoxVM: vmid, name,
--- node, status, cores, maxmem.
+-- Discovery query against the becash143/proxmox Steampipe plugin
+-- (hub.steampipe.io/plugins/becash143/proxmox), confirmed published
+-- and installable via `steampipe plugin install becash143/proxmox`.
+-- Column names verified against the plugin's proxmox_vm table docs:
+-- hub.steampipe.io/plugins/becash143/proxmox/tables/proxmox_vm --
+-- name, vm_id, node, status, cpus, max_mem. The Go side only cares
+-- that the JSON keys returned match the `json` tags on
+-- model.ProxmoxVM, which now mirror this schema exactly.
 select
-  vmid,
+  vm_id,
   name,
   node,
   status,
-  cores,
-  maxmem
+  cpus,
+  max_mem
 from proxmox_vm;
