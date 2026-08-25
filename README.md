@@ -34,10 +34,22 @@ to audit.
 
 ## Requirements
 
-- Go 1.21+
-- `steampipe` installed and configured with:
-  - `theapsgroup/vsphere` plugin, connected to your vCenter/ESXi
-  - your Proxmox Steampipe plugin, connected to your PVE cluster
+- Go 1.22+ (go.mod pins 1.22.2; CI builds against 1.22 — on an older
+  1.21.x toolchain, `go build` will try to auto-fetch 1.22 over the
+  network, which fails in offline/locked-down environments, so just
+  use 1.22+ directly)
+- `steampipe` installed (see steampipe.io/downloads) and configured
+  with:
+  - `theapsgroup/vsphere` plugin, connected to your vCenter/ESXi —
+    `steampipe plugin install theapsgroup/vsphere`, then add a
+    connection in `~/.steampipe/config/vsphere.spc`
+  - your Proxmox Steampipe plugin, connected to your PVE cluster —
+    same pattern, its own `.spc` connection file
+  - This tool assumes you already have both plugins installed and
+    query-able via `steampipe query "select * from vsphere_vm"`
+    (or your Proxmox table) before you touch `vmmigrate` at all —
+    get that working first, independent of this tool, if it isn't
+    already.
 - A Proxmox API token (`Datacenter > Permissions > API Tokens`) with
   rights to create VMs and read tasks on the target node(s)
 - An ESXi/vCenter host already registered as Proxmox storage
@@ -49,6 +61,19 @@ to audit.
 ```
 go build -o vmmigrate ./cmd/vmmigrate
 ```
+
+**Run it from the repo root** (or copy the `queries/` directory
+alongside wherever you put the binary). `discover`'s SQL file flags
+default to `queries/discover_vsphere.sql` / `queries/discover_proxmox.sql`,
+resolved relative to your current directory, not the binary's
+location — build it, move the binary to e.g. `/usr/local/bin`, and
+`vmmigrate discover` will fail with a `no such file or directory`
+error that looks like a Steampipe problem but isn't. Either stay in
+the repo root, or pass `--vsphere-sql`/`--proxmox-sql` explicitly.
+The state file (`vmmigrate-state.json` by default) is also resolved
+relative to your current directory — run every `vmmigrate` command
+from the same working directory, or pass `--state` explicitly each
+time.
 
 ## Workflow
 
@@ -140,15 +165,24 @@ testdata/                Fixture data used by unit tests (no live steampipe/Prox
 
 ## Testing
 
-Every package except the CLI itself and the pure Proxmox HTTP client
-has unit tests that run without any live steampipe/vSphere/Proxmox
-connection — the Steampipe wrapper is tested against a fake shell
-script standing in for the real binary, and readiness/planner logic
-runs against static JSON fixtures.
+`internal/planner`, `internal/readiness`, `internal/state`, and
+`internal/steampipe` have unit tests that run without any live
+steampipe/vSphere/Proxmox connection — the Steampipe wrapper is
+tested against a fake shell script standing in for the real binary,
+and readiness/planner logic runs against static JSON fixtures.
 
 ```
 go test ./...
 ```
+
+`internal/drift`, `internal/orchestrator`, and `internal/model`
+currently have no test files (`go test ./...` will report
+`[no test files]` for these) — same as the CLI (`cmd/vmmigrate`) and
+the Proxmox HTTP client (`internal/proxmoxapi`), which are untested
+for the documented reason that they need a live Proxmox API to
+exercise meaningfully. Treat the orchestrator and drift packages in
+particular as read-the-code-before-trusting-it until tests land for
+them.
 
 ## Roadmap (not built yet, scoped honestly)
 

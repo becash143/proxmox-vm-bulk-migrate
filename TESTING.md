@@ -23,6 +23,15 @@ go build -o vmmigrate ./cmd/vmmigrate
 
 If this fails, that's the first useful bug report — send me the error.
 
+Run every command below **from the repo root**, in the same
+directory each time. `discover` looks for `queries/discover_*.sql`
+relative to your current directory (not the binary's location), and
+all commands share `vmmigrate-state.json` the same way — if you move
+the binary elsewhere or `cd` around between steps, you'll get a
+confusing "no such file" error that has nothing to do with Steampipe
+or Proxmox. If you'd rather not stay in one directory, pass
+`--vsphere-sql` / `--proxmox-sql` / `--state` explicitly instead.
+
 ## 2. Discover (read-only, safe)
 
 ```
