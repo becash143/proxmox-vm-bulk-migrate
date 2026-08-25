@@ -102,6 +102,12 @@ func cmdDiscover(args []string) {
 	steampipeBin := fs.String("steampipe-bin", "steampipe", "path to steampipe binary")
 	vsphereSQLFile := fs.String("vsphere-sql", "queries/discover_vsphere.sql", "path to vSphere discovery SQL")
 	proxmoxSQLFile := fs.String("proxmox-sql", "queries/discover_proxmox.sql", "path to Proxmox discovery SQL")
+	vsphereHostsSQLFile := fs.String("vsphere-hosts-sql", "queries/discover_vsphere_hosts.sql", "path to vSphere host discovery SQL (skipped if the file doesn't exist)")
+	vsphereDatastoresSQLFile := fs.String("vsphere-datastores-sql", "queries/discover_vsphere_datastores.sql", "path to vSphere datastore discovery SQL (skipped if the file doesn't exist)")
+	vsphereNetworksSQLFile := fs.String("vsphere-networks-sql", "queries/discover_vsphere_networks.sql", "path to vSphere network discovery SQL (skipped if the file doesn't exist)")
+	proxmoxNodesSQLFile := fs.String("proxmox-nodes-sql", "queries/discover_proxmox_nodes.sql", "path to Proxmox node discovery SQL (skipped if the file doesn't exist)")
+	proxmoxStorageSQLFile := fs.String("proxmox-storage-sql", "queries/discover_proxmox_storage.sql", "path to Proxmox storage discovery SQL (skipped if the file doesn't exist)")
+	proxmoxNetworksSQLFile := fs.String("proxmox-networks-sql", "queries/discover_proxmox_networks.sql", "path to Proxmox network discovery SQL (skipped if the file doesn't exist)")
 	fs.Parse(args)
 
 	sp := steampipe.New()
@@ -116,21 +122,90 @@ func cmdDiscover(args []string) {
 		fatalf("querying Proxmox via steampipe: %v", err)
 	}
 
+	// The VM queries above are mandatory -- this tool is nothing
+	// without them. The resource queries below (hosts, datastores,
+	// networks, nodes, storage) are additive: skip silently if the
+	// SQL file isn't present (e.g. an older checkout or a deliberately
+	// trimmed queries/ dir) rather than failing discover entirely, and
+	// still fail loudly if the file exists but the query itself
+	// errors (bad SQL, plugin not connected, etc.) since that's a
+	// real problem worth surfacing.
 	now := time.Now().UTC()
+
+	var hosts []model.VSphereHost
+	queryOptional(sp, *vsphereHostsSQLFile, &hosts, "vSphere hosts")
+	var datastores []model.VSphereDatastore
+	queryOptional(sp, *vsphereDatastoresSQLFile, &datastores, "vSphere datastores")
+	var networks []model.VSphereNetwork
+	queryOptional(sp, *vsphereNetworksSQLFile, &networks, "vSphere networks")
+
+	var nodes []model.ProxmoxNode
+	queryOptional(sp, *proxmoxNodesSQLFile, &nodes, "Proxmox nodes")
+	var storage []model.ProxmoxStorage
+	queryOptional(sp, *proxmoxStorageSQLFile, &storage, "Proxmox storage")
+	var pnetworks []model.ProxmoxNetwork
+	queryOptional(sp, *proxmoxNetworksSQLFile, &pnetworks, "Proxmox networks")
+
 	for i := range vms {
 		vms[i].CapturedAt = now
 	}
 	for i := range pvms {
 		pvms[i].CapturedAt = now
 	}
+	for i := range hosts {
+		hosts[i].CapturedAt = now
+	}
+	for i := range datastores {
+		datastores[i].CapturedAt = now
+	}
+	for i := range networks {
+		networks[i].CapturedAt = now
+	}
+	for i := range nodes {
+		nodes[i].CapturedAt = now
+	}
+	for i := range storage {
+		storage[i].CapturedAt = now
+	}
+	for i := range pnetworks {
+		pnetworks[i].CapturedAt = now
+	}
 
 	st := openStore(*statePath)
-	st.Inventory = &model.InventorySnapshot{TakenAt: now, VSphere: vms, Proxmox: pvms}
+	st.Inventory = &model.InventorySnapshot{
+		TakenAt: now,
+		VSphere: vms,
+		Proxmox: pvms,
+
+		VSphereHosts:      hosts,
+		VSphereDatastores: datastores,
+		VSphereNetworks:   networks,
+
+		ProxmoxNodes:    nodes,
+		ProxmoxStorage:  storage,
+		ProxmoxNetworks: pnetworks,
+	}
 	if err := st.Save(); err != nil {
 		fatalf("saving state: %v", err)
 	}
 
 	fmt.Printf("Discovered %d vSphere VM(s) and %d Proxmox VM(s) at %s\n", len(vms), len(pvms), now.Format(time.RFC3339))
+	fmt.Printf("Also captured: %d vSphere host(s), %d vSphere datastore(s), %d vSphere network(s), %d Proxmox node(s), %d Proxmox storage row(s), %d Proxmox network interface(s)\n",
+		len(hosts), len(datastores), len(networks), len(nodes), len(storage), len(pnetworks))
+}
+
+// queryOptional runs sql from sqlFile into dest, skipping quietly if
+// sqlFile doesn't exist (this resource just wasn't shipped/enabled)
+// but failing loudly (via fatalf, same as the mandatory VM queries)
+// if the file exists and the query itself fails -- a present-but-
+// broken query is a real problem, not an absent optional extra.
+func queryOptional(sp *steampipe.Client, sqlFile string, dest interface{}, label string) {
+	if _, err := os.Stat(sqlFile); err != nil {
+		return
+	}
+	if err := sp.QueryFile(sqlFile, dest); err != nil {
+		fatalf("querying %s via steampipe: %v", label, err)
+	}
 }
 
 // ---- check ----
@@ -380,8 +455,15 @@ func cmdStatus(args []string) {
 	}
 
 	if st.Inventory != nil {
-		fmt.Printf("Last discovery: %s (%d vSphere, %d Proxmox VMs)\n\n",
+		fmt.Printf("Last discovery: %s (%d vSphere, %d Proxmox VMs)\n",
 			st.Inventory.TakenAt.Format(time.RFC3339), len(st.Inventory.VSphere), len(st.Inventory.Proxmox))
+		if n := len(st.Inventory.VSphereHosts) + len(st.Inventory.VSphereDatastores) + len(st.Inventory.VSphereNetworks) +
+			len(st.Inventory.ProxmoxNodes) + len(st.Inventory.ProxmoxStorage) + len(st.Inventory.ProxmoxNetworks); n > 0 {
+			fmt.Printf("  + %d vSphere host(s), %d datastore(s), %d network(s); %d Proxmox node(s), %d storage row(s), %d network interface(s)\n",
+				len(st.Inventory.VSphereHosts), len(st.Inventory.VSphereDatastores), len(st.Inventory.VSphereNetworks),
+				len(st.Inventory.ProxmoxNodes), len(st.Inventory.ProxmoxStorage), len(st.Inventory.ProxmoxNetworks))
+		}
+		fmt.Println()
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)

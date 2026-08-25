@@ -160,10 +160,51 @@ relative to your current directory — run every `vmmigrate` command
 from the same working directory, or pass `--state` explicitly each
 time.
 
+## Discovered resources
+
+`vmmigrate discover` always captures VMs (`vsphere_vm` / `proxmox_vm`
+-- required, `discover` fails if either query fails). It also captures
+six more resource types, each optional: if the SQL file isn't present,
+that resource is just skipped (0 rows), rather than failing the whole
+command.
+
+| Resource | Source table | SQL file | Why it's here |
+|---|---|---|---|
+| vSphere hosts | `vsphere_host` | `queries/discover_vsphere_hosts.sql` | ESXi host CPU/RAM headroom + status, for target sizing |
+| vSphere datastores | `vsphere_datastore` | `queries/discover_vsphere_datastores.sql` | Source-side storage capacity/free space |
+| vSphere networks | `vsphere_network` | `queries/discover_vsphere_networks.sql` | Port groups/networks -- half of the port-group-to-bridge mapping in the roadmap |
+| Proxmox nodes | `proxmox_node` | `queries/discover_proxmox_nodes.sql` | Target node CPU/RAM/disk headroom + status |
+| Proxmox storage | `proxmox_storage` | `queries/discover_proxmox_storage.sql` | Target storage capacity, per node (dedupe on `storage` for shared backends) |
+| Proxmox networks | `proxmox_network` | `queries/discover_proxmox_networks.sql` | Bridges/bonds/VLANs per node -- the other half of the network mapping |
+
+All six are new as of this change and verified the same way the
+existing `discover_vsphere.sql` / `discover_proxmox.sql` were: against
+the plugins' own Go table definitions (`table_host.go`,
+`table_datastore.go`, `table_network.go` in
+`theapsgroup/steampipe-plugin-vsphere` @ v0.2.1; `table_proxmox_node.go`,
+`table_proxmox_storage.go`, `table_proxmox_network.go` in
+`becash143/steampipe-plugin-proxmox` @ v1.0.2) rather than the Hub
+docs pages, which don't render a static column list for these tables.
+Both plugins expose more tables than this tool uses today --
+`vsphere_vm`/`host`/`datastore`/`network` is the vSphere plugin's
+complete table set (4 total), but `becash143/proxmox` also has
+`proxmox_container`, `proxmox_pool`, `proxmox_task`,
+`proxmox_cluster_resource`, and `proxmox_user` that nothing here
+queries yet -- `proxmox_pool` in particular could replace/complement
+the vSphere-tag-based `app_group` wave grouping if you'd rather group
+by Proxmox resource pool.
+
+None of these six feed into `check`, `plan`, or `drift` yet -- they're
+captured and stored in the snapshot (`vsphere_hosts`, `vsphere_datastores`,
+`vsphere_networks`, `proxmox_nodes`, `proxmox_storage`, `proxmox_networks`
+in `InventorySnapshot`) so the data's there, but wiring e.g. a
+"does the target node have enough free RAM for this wave" readiness
+check, or the actual port-group-to-bridge mapping, is still open work.
+
 ## Workflow
 
 ```
-# 1. Snapshot both sides
+# 1. Snapshot both sides -- VMs plus hosts/datastores/networks/nodes/storage
 ./vmmigrate discover
 
 # 2. Run pre-flight readiness checks (powered-on VMs, Windows/VirtIO
@@ -252,6 +293,8 @@ internal/proxmoxapi/    Minimal Proxmox REST client (create-via-import, task pol
 internal/orchestrator/  Concurrent bulk migration engine
 internal/drift/         Post-migration baseline-vs-live config comparison
 queries/                Discovery SQL, kept out of Go code so it's editable without a rebuild
+                        (VMs are required; hosts/datastores/networks/nodes/storage are
+                        optional -- see "Discovered resources" above)
 testdata/                Fixture data used by unit tests (no live steampipe/Proxmox required to test)
 ```
 
@@ -280,7 +323,14 @@ them.
 
 - Flow-log-based dependency clustering instead of manual tagging
 - Network/SDN mapping table (vSphere port group → Proxmox
-  bridge/VLAN) with its own readiness control
+  bridge/VLAN) with its own readiness control -- raw inventory for
+  both sides is now captured (`discover_vsphere_networks.sql` /
+  `discover_proxmox_networks.sql`), but the actual mapping and
+  readiness control aren't built
+- Capacity-aware wave/target checks using the new host/node/storage
+  discovery (`discover_vsphere_hosts.sql`, `discover_proxmox_nodes.sql`,
+  `discover_*_storage/datastores.sql`) -- captured but not yet
+  consumed by `check` or `plan`
 - Multi-disk / multi-NIC import spec generation
 - Rollback command (delete the Proxmox VM, unmark mapping) for failed
   waves
